@@ -81,10 +81,13 @@ func main() {
 		"dmg":   "Damage",
 		"kills": "Kills",
 		"dapm":  "Damage Per Minute",
+		"as":    "AIRSHOTS",
 	}
 
 	var maxstat uint64
 	var dpmMap = make(map[string]float64)
+	var airshotMap = make(map[string]float64)
+
 	for _, json := range logs {
 		jsonmap, _ := json.Get("names").Map()
 		for steamid, playerName := range jsonmap {
@@ -103,9 +106,13 @@ func main() {
 				dpm, _ := json.Get("players").Get(steamid).Get("dapm").Float64()
 				dpmMap[steamid] += dpm
 			}
+			if stat == "as" {
+				as, _ := json.Get("players").Get(steamid).Get("as").Float64()
+				airshotMap[steamid] += as
+			}
 		}
 	}
-	if stat == "dapm" {
+	if stat == "dapm" || stat == "as" {
 		goto statArr
 	}
 	for steamid, stats := range steamidStatsMap { //loop over stats array of every steamid
@@ -129,8 +136,9 @@ func main() {
 statArr:
 	var classStatArrMap = make(map[string]StatArr)
 	var dpmArr StatArr
+	var airshotArr StatArr
 
-	if stat != "dapm" {
+	if stat != "dapm" && stat != "as" {
 		for _, class := range classes {
 			for steamid, kills := range classKillsMap[class] {
 				classStatArrMap[class] = append(classStatArrMap[class], &Stat{
@@ -139,12 +147,22 @@ statArr:
 				})
 			}
 		}
-	} else {
+	} else if stat == "dapm" {
 		for steamid, dpm := range dpmMap {
 			dpmArr = append(dpmArr, &Stat{
 				steamid,
 				float32(dpm) / float32(matchesPlayerMap[steamid]),
 			})
+		}
+	} else if stat == "as" {
+		for steamid, airshots := range airshotMap {
+			if airshots != 0.0 {
+				airshotArr = append(airshotArr, &Stat{
+					steamid,
+					float32(airshots) / float32(matchesPlayerMap[steamid]),
+				})
+			}
+
 		}
 	}
 	//Sort the stats, Decreasing order
@@ -154,7 +172,7 @@ statArr:
 
 	fmt.Println(`<barchart title="Bullet Graph" left="300">`)
 	format := `<bitem name="%s" value="%f" color="blue"/>`
-	if stat != "dapm" {
+	if stat != "dapm" && stat != "as" {
 		for class, statArr := range classStatArrMap {
 			fmt.Printf(`<bdata title="Average %s %s" showdata="true" color="red" unit="">`+"\n",
 				strings.Title(class), statTitleMap[stat])
@@ -165,7 +183,7 @@ statArr:
 			}
 			fmt.Println(`</bdata>`)
 		}
-	} else {
+	} else if stat == "dapm" {
 		sort.Sort(dpmArr)
 		fmt.Printf(`<bdata title="Average Player %s" showdata="true" color="red" unit="">`+"\n",
 			statTitleMap[stat])
@@ -173,6 +191,16 @@ statArr:
 			if stat.stat < 10.0 {
 				continue
 			}
+			fmt.Printf(format+"\n",
+				steamidNameMap[stat.steamid],
+				stat.stat)
+		}
+		fmt.Println(`</bdata>`)
+	} else if stat == "as" {
+		sort.Sort(airshotArr)
+		fmt.Printf(`<bdata title="Average Player %s" showdata="true" color="red" unit="">`+"\n",
+			statTitleMap[stat])
+		for _, stat := range airshotArr {
 			fmt.Printf(format+"\n",
 				steamidNameMap[stat.steamid],
 				stat.stat)
