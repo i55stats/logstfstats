@@ -2,62 +2,36 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
-	"os"
+	"sort"
 	"strings"
 
 	"github.com/bitly/go-simplejson"
 )
 
-type Class int
-
-const (
-	Scout   Class = 0
-	Soldier Class = 1
-	Pyro    Class = 2
-
-	Engi  Class = 3
-	Heavy Class = 4
-	Demo  Class = 5
-
-	Sniper Class = 6
-	Medic  Class = 7
-	Spy    Class = 8
-)
-
-var stringClassMap = map[string]Class{
-	"scout":   Scout,
-	"soldier": Soldier,
-	"pyro":    Pyro,
-
-	"demoman":      Demo,
-	"heavyweapons": Heavy,
-	"engineer":     Engi,
-
-	"sniper": Sniper,
-	"medic":  Medic,
-	"spy":    Spy,
+type Stat struct {
+	steamid string
+	stat    uint64
 }
 
-var classStringMap = map[Class]string{
-	Scout:   "scout",
-	Soldier: "soldier",
-	Pyro:    "pyro",
+type StatArr []*Stat
 
-	Demo:  "demoman",
-	Heavy: "heavyweapons",
-	Engi:  "engineer",
-
-	Sniper: "sniper",
-	Medic:  "medic",
-	Spy:    "spy",
+func (s StatArr) Len() int {
+	return len(s)
 }
 
-type steamidKills struct {
-	teamid string
-	Kills  uint
+func (s StatArr) Less(i, j int) bool {
+	return s[i].stat > s[j].stat
+}
+
+func (s StatArr) Swap(i, j int) {
+	tmp := s[i]
+	s[i] = s[j]
+	s[j] = tmp
 }
 
 func getJson(url string) (*simplejson.Json, error) {
@@ -71,42 +45,44 @@ func getJson(url string) (*simplejson.Json, error) {
 	return json, err
 }
 
-func getClassesPlayed(player *simplejson.Json) []Class {
-	class_stats, _ := player.Get("class_stats").Array()
-	var classes []Class
-
-	for _, class := range class_stats {
-		classString := class.(map[string]interface{})["type"].(string)
-		classes = append(classes, stringClassMap[classString])
+func checkEmpty(flag string, name string) {
+	if flag == "" {
+		log.Fatalf("flag %s empty", name)
 	}
-	return classes
 }
 
 func main() {
-	logs := make([]*simplejson.Json, len(os.Args)-1)
+	var logs []*simplejson.Json
 
-	fmt.Print("Getting logs...")
-	for i := 1; i <= len(os.Args)-1; i++ {
-		json, err := getJson("http://logs.tf/json/" + (os.Args[i])[15:])
+	var urls, stat string
+	flag.StringVar(&urls, "urls", "", "logs.tf log")
+	flag.StringVar(&stat, "stat", "", "player stat")
+
+	flag.Parse()
+	checkEmpty(urls, "urls")
+	checkEmpty(stat, "stat")
+
+	urlArr := strings.Split(urls, ",")
+	for _, url := range urlArr {
+		json, err := getJson("http://logs.tf/json/" + url[14:])
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+			log.Fatal(err)
 		}
-		logs[i-1] = json
+		logs = append(logs, json)
 	}
-
-	fmt.Println("Done.")
 
 	steamidNameMap := make(map[string]string)
 	steamidStatsMap := make(map[string][](map[string]interface{}))
+	matchesPlayerMap := make(map[string]uint64)
 
+	var maxstat uint64
 	for _, json := range logs {
 		jsonmap, _ := json.Get("names").Map()
 		for steamid, playerName := range jsonmap {
 			// fmt.Println(steamid)
 			// fmt.Println(player)
 			steamidNameMap[steamid] = playerName.(string)
-			// steamidClassMap[steamid] = getClassesPlayed(json.Get("players").Get(steamid))
+			matchesPlayerMap[steamid]++
 			classArray, _ := json.Get("players").Get(steamid).Get("class_stats").Array()
 
 			for _, stats := range classArray {
@@ -118,16 +94,22 @@ func main() {
 	}
 
 	var classKillsMap = make(map[string](map[string]uint))
-	classes := []string{"scout", "soldier", "pyro", "engineer", "heavyweapons",
-		"demoman", "sniper", "medic", "spy"}
+	classes := []string{"scout", "soldier", "demoman"}
+	var statTitleMap = map[string]string{
+		"dmg":   "Damage",
+		"kills": "Kills",
+	}
 
 	for steamid, stats := range steamidStatsMap { //loop over stats array of every steamid
 		for _, classname := range classes { //loop over every class's name
 			if _, exists := classKillsMap[classname]; exists {
 				for _, class_stats := range stats { // for every class played in player's stats
 					if class_stats["type"] == classname { //if player has played classname
-						kills, _ := (class_stats["kills"].(json.Number)).Int64()
+						kills, _ := (class_stats[stat].(json.Number)).Int64()
 						classKillsMap[classname][steamid] += uint(kills)
+						if uint64(kills) > maxstat {
+							maxstat = uint64(kills)
+						}
 					}
 				}
 			} else {
@@ -136,31 +118,33 @@ func main() {
 		}
 	}
 
-	i := 0
-	for class, stats := range classKillsMap {
-		fmt.Println(class)
-		for steamid, kills := range stats {
-			if kills == 0 {
-				continue
-			}
-			fmt.Printf("%d \"%s\" %d\n", i, shorten(steamidNameMap[steamid], 15), kills)
-			i += 1
+	var classStatArrMap = make(map[string]StatArr)
+
+	for _, class := range classes {
+		for steamid, kills := range classKillsMap[class] {
+			classStatArrMap[class] = append(classStatArrMap[class], &Stat{
+				class,
+				uint64(kills) / matchesPlayerMap[steamid],
+			})
 		}
-		i = 0
 	}
-	// for steamid, classes := range steamidClassMap {
-	// 	fmt.Print(steamidNameMap[steamid] + ": ")
-	// 	for _, i := range classes {
-	// 		fmt.Print(classStringMap[i] + " ")
-	// 	}
-	// 	fmt.Println("")
-	// }
 
-}
+	//Sort the stats, Decreasing order
+	sort.Sort(classStatArrMap["scout"])
+	sort.Sort(classStatArrMap["soldier"])
+	sort.Sort(classStatArrMap["demoman"])
 
-func shorten(str string, to int) string {
-	if len(str) < to {
-		return str
+	fmt.Println(`<barchart title="Bullet Graph" left="300">`)
+	format := `<bitem name="%s" value="%d" color="blue"/>`
+	for class, statArr := range classStatArrMap {
+		fmt.Printf(`<bdata title="Average %s %s" showdata="true" color="red" unit="">`+"\n",
+			strings.Title(class), statTitleMap[stat])
+		for _, stat := range statArr {
+			fmt.Printf(format+"\n",
+				steamidNameMap[stat.steamid],
+				stat.stat)
+		}
+		fmt.Println(`</bdata>`)
 	}
-	return str[:to]
+	fmt.Println(`</barchart>`)
 }
