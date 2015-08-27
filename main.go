@@ -15,7 +15,7 @@ import (
 
 type Stat struct {
 	steamid string
-	stat    uint64
+	stat    float32
 }
 
 type StatArr []*Stat
@@ -74,8 +74,17 @@ func main() {
 	steamidNameMap := make(map[string]string)
 	steamidStatsMap := make(map[string][](map[string]interface{}))
 	matchesPlayerMap := make(map[string]uint64)
+	classKillsMap := make(map[string](map[string]uint))
+
+	classes := []string{"scout", "soldier", "demoman"}
+	var statTitleMap = map[string]string{
+		"dmg":   "Damage",
+		"kills": "Kills",
+		"dapm":  "Damage Per Minute",
+	}
 
 	var maxstat uint64
+	var dpmMap = make(map[string]float64)
 	for _, json := range logs {
 		jsonmap, _ := json.Get("names").Map()
 		for steamid, playerName := range jsonmap {
@@ -90,16 +99,15 @@ func main() {
 				// fmt.Println(stats)
 				steamidStatsMap[steamid] = append(steamidStatsMap[steamid], stats.(map[string]interface{}))
 			}
+			if stat == "dapm" {
+				dpm, _ := json.Get("players").Get(steamid).Get("dapm").Float64()
+				dpmMap[steamid] += dpm
+			}
 		}
 	}
-
-	var classKillsMap = make(map[string](map[string]uint))
-	classes := []string{"scout", "soldier", "demoman"}
-	var statTitleMap = map[string]string{
-		"dmg":   "Damage",
-		"kills": "Kills",
+	if stat == "dapm" {
+		goto statArr
 	}
-
 	for steamid, stats := range steamidStatsMap { //loop over stats array of every steamid
 		for _, classname := range classes { //loop over every class's name
 			if _, exists := classKillsMap[classname]; exists {
@@ -118,33 +126,56 @@ func main() {
 		}
 	}
 
+statArr:
 	var classStatArrMap = make(map[string]StatArr)
+	var dpmArr StatArr
 
-	for _, class := range classes {
-		for steamid, kills := range classKillsMap[class] {
-			classStatArrMap[class] = append(classStatArrMap[class], &Stat{
-				class,
-				uint64(kills) / matchesPlayerMap[steamid],
+	if stat != "dapm" {
+		for _, class := range classes {
+			for steamid, kills := range classKillsMap[class] {
+				classStatArrMap[class] = append(classStatArrMap[class], &Stat{
+					steamid,
+					float32(kills) / float32(matchesPlayerMap[steamid]),
+				})
+			}
+		}
+	} else {
+		for steamid, dpm := range dpmMap {
+			dpmArr = append(dpmArr, &Stat{
+				steamid,
+				float32(dpm) / float32(matchesPlayerMap[steamid]),
 			})
 		}
 	}
-
 	//Sort the stats, Decreasing order
 	sort.Sort(classStatArrMap["scout"])
 	sort.Sort(classStatArrMap["soldier"])
 	sort.Sort(classStatArrMap["demoman"])
 
 	fmt.Println(`<barchart title="Bullet Graph" left="300">`)
-	format := `<bitem name="%s" value="%d" color="blue"/>`
-	for class, statArr := range classStatArrMap {
-		fmt.Printf(`<bdata title="Average %s %s" showdata="true" color="red" unit="">`+"\n",
-			strings.Title(class), statTitleMap[stat])
-		for _, stat := range statArr {
+	format := `<bitem name="%s" value="%f" color="blue"/>`
+	if stat != "dapm" {
+		for class, statArr := range classStatArrMap {
+			fmt.Printf(`<bdata title="Average %s %s" showdata="true" color="red" unit="">`+"\n",
+				strings.Title(class), statTitleMap[stat])
+			for _, stat := range statArr {
+				fmt.Printf(format+"\n",
+					steamidNameMap[stat.steamid],
+					stat.stat)
+			}
+			fmt.Println(`</bdata>`)
+		}
+	} else {
+		fmt.Printf(`<bdata title="Average Player %s" showdata="true" color="red" unit="">`+"\n",
+			statTitleMap[stat])
+		for _, stat := range dpmArr {
+			if stat.stat < 10.0 {
+				continue
+			}
 			fmt.Printf(format+"\n",
 				steamidNameMap[stat.steamid],
 				stat.stat)
 		}
-		fmt.Println(`</bdata>`)
 	}
 	fmt.Println(`</barchart>`)
 }
