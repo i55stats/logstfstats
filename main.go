@@ -166,6 +166,7 @@ statArr:
 			fmt.Println(`</bdata>`)
 		}
 	} else {
+		sort.Sort(dpmArr)
 		fmt.Printf(`<bdata title="Average Player %s" showdata="true" color="red" unit="">`+"\n",
 			statTitleMap[stat])
 		for _, stat := range dpmArr {
@@ -176,6 +177,7 @@ statArr:
 				steamidNameMap[stat.steamid],
 				stat.stat)
 		}
+		fmt.Println(`</bdata>`)
 	}
 	fmt.Println(`</barchart>`)
 }
