@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/json"
+	js "encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -87,6 +87,7 @@ func main() {
 	var maxstat uint64
 	var dpmMap = make(map[string]float64)
 	var airshotMap = make(map[string]float64)
+	var daphMap = make(map[string]float32)
 
 	for _, json := range logs {
 		jsonmap, _ := json.Get("names").Map()
@@ -111,16 +112,29 @@ func main() {
 				airshotMap[steamid] += as
 			}
 		}
+		healsSpread, _ := json.Get("healspread").Map()
+		for _, spread := range healsSpread {
+			for steamid, heals := range spread.(map[string]interface{}) {
+				heal, _ := heals.(js.Number).Int64()
+				if heal == 0 {
+					continue
+				}
+				dmg, _ := json.Get("players").Get(steamid).Get("dmg").Uint64()
+				daphMap[steamid] += float32(dmg) / float32(heal)
+			}
+		}
 	}
+
 	if stat == "dapm" || stat == "as" {
 		goto statArr
 	}
+
 	for steamid, stats := range steamidStatsMap { //loop over stats array of every steamid
 		for _, classname := range classes { //loop over every class's name
 			if _, exists := classKillsMap[classname]; exists {
 				for _, class_stats := range stats { // for every class played in player's stats
 					if class_stats["type"] == classname { //if player has played classname
-						kills, _ := (class_stats[stat].(json.Number)).Int64()
+						kills, _ := (class_stats[stat].(js.Number)).Int64()
 						classKillsMap[classname][steamid] += uint(kills)
 						if uint64(kills) > maxstat {
 							maxstat = uint64(kills)
@@ -137,6 +151,7 @@ statArr:
 	var classStatArrMap = make(map[string]StatArr)
 	var dpmArr StatArr
 	var airshotArr StatArr
+	var daphArr StatArr //damage dealt per heals
 
 	if stat != "dapm" && stat != "as" {
 		for _, class := range classes {
@@ -144,6 +159,14 @@ statArr:
 				classStatArrMap[class] = append(classStatArrMap[class], &Stat{
 					steamid,
 					float32(kills) / float32(matchesPlayerMap[steamid]),
+				})
+			}
+		}
+		if stat == "dmg" {
+			for steamid, daph := range daphMap {
+				daphArr = append(daphArr, &Stat{
+					steamid,
+					daph / float32(matchesPlayerMap[steamid]),
 				})
 			}
 		}
@@ -169,6 +192,7 @@ statArr:
 	sort.Sort(classStatArrMap["scout"])
 	sort.Sort(classStatArrMap["soldier"])
 	sort.Sort(classStatArrMap["demoman"])
+	sort.Sort(daphArr)
 
 	fmt.Println(`<barchart title="Bullet Graph" left="300">`)
 	format := `<bitem name="%s" value="%f" color="blue"/>`
@@ -177,6 +201,15 @@ statArr:
 			fmt.Printf(`<bdata title="Average %s %s" showdata="true" color="red" unit="">`+"\n",
 				strings.Title(class), statTitleMap[stat])
 			for _, stat := range statArr {
+				fmt.Printf(format+"\n",
+					steamidNameMap[stat.steamid],
+					stat.stat)
+			}
+			fmt.Println(`</bdata>`)
+		}
+		if stat == "dmg" {
+			fmt.Printf(`<bdata title="Average Damage Dealt per Heal" showdata="true" color="red" unit="">` + "\n")
+			for _, stat := range daphArr {
 				fmt.Printf(format+"\n",
 					steamidNameMap[stat.steamid],
 					stat.stat)
@@ -208,4 +241,5 @@ statArr:
 		fmt.Println(`</bdata>`)
 	}
 	fmt.Println(`</barchart>`)
+
 }
